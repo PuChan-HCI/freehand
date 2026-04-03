@@ -15,9 +15,27 @@ RESAMPLE_FACTOR = 4
 PATH_SAVE = DIR_RAW
 DELAY_TFORM = 4  # delayed tform from temporal calibration
 
-fh5_frames = h5py.File(os.path.join(PATH_SAVE,'frames_res{}'.format(RESAMPLE_FACTOR)+".h5"),'a')
+# Create HDF5 file with proper error handling for Windows file locking
+frames_h5_path = os.path.join(PATH_SAVE, 'frames_res{}'.format(RESAMPLE_FACTOR) + ".h5")
+scans_h5_path = os.path.join(PATH_SAVE, 'scans_res{}'.format(RESAMPLE_FACTOR) + ".h5")
+
+# Remove existing files to avoid file locking issues
+if os.path.exists(frames_h5_path):
+    try:
+        os.remove(frames_h5_path)
+    except Exception as e:
+        print(f"Warning: Could not delete existing file {frames_h5_path}: {e}")
+
+if FLAG_SCANFILE and os.path.exists(scans_h5_path):
+    try:
+        os.remove(scans_h5_path)
+    except Exception as e:
+        print(f"Warning: Could not delete existing file {scans_h5_path}: {e}")
+
+# Create fresh HDF5 files
+fh5_frames = h5py.File(frames_h5_path, 'w')
 if FLAG_SCANFILE:
-    fh5_scans = h5py.File(os.path.join(PATH_SAVE,'scans_res{}'.format(RESAMPLE_FACTOR)+".h5"),'a')
+    fh5_scans = h5py.File(scans_h5_path, 'w')
 
 folders_subject = [f for f in os.listdir(DIR_RAW) if os.path.isdir(os.path.join(DIR_RAW, f))]
 num_frames = np.zeros((len(folders_subject),NUM_SCANS),dtype=np.uint16)

@@ -1,7 +1,7 @@
 
 import numpy as np
 import SimpleITK as sitk
-import cv2,csv
+import csv
 import openpyxl
 import pandas as pd
 
@@ -36,14 +36,39 @@ def read_frame_transform(filename, scan_crop_indices, resample_factor=1, delay_t
 
 
 def frame_resize(image, resample_factor):
-    # frame_resize = lambda im : cv2.resize(im, None, fx=1/RESAMPLE_FACTOR, fy=1/RESAMPLE_FACTOR, interpolation = cv2.INTER_LINEAR)
-    return cv2.resize(
-        image, 
-        dsize=None, 
-        fx=1/resample_factor, 
-        fy=1/resample_factor, 
-        interpolation = cv2.INTER_LINEAR
-        )
+    # Pure NumPy implementation of bilinear interpolation
+    # This replaces cv2.resize with fx=1/resample_factor, fy=1/resample_factor, interpolation=cv2.INTER_LINEAR
+    
+    h, w = image.shape
+    new_h = int(h / resample_factor)
+    new_w = int(w / resample_factor)
+    
+    # Create coordinate mapping
+    # Map new coordinates back to original image coordinates
+    y_coords = np.linspace(0, h - 1, new_h)
+    x_coords = np.linspace(0, w - 1, new_w)
+    
+    # Create meshgrid for all new positions
+    yy, xx = np.meshgrid(y_coords, x_coords, indexing='ij')
+    
+    # Get integer and fractional parts
+    y0 = np.floor(yy).astype(int)
+    y1 = np.minimum(y0 + 1, h - 1)
+    x0 = np.floor(xx).astype(int)
+    x1 = np.minimum(x0 + 1, w - 1)
+    
+    fy = yy - y0  # fractional y
+    fx = xx - x0  # fractional x
+    
+    # Bilinear interpolation
+    f00 = image[y0, x0] * (1 - fx) * (1 - fy)
+    f01 = image[y0, x1] * fx * (1 - fy)
+    f10 = image[y1, x0] * (1 - fx) * fy
+    f11 = image[y1, x1] * fx * fy
+    
+    resized = f00 + f01 + f10 + f11
+    
+    return resized.astype(image.dtype)
 
 
 def read_scan_crop_indices_file(filename, num_scans):
