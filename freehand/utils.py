@@ -4,16 +4,19 @@ from matplotlib import pyplot as plt
 
 
 def pair_samples(num_samples, num_pred):
+    """Enumerate frame pairs whose relative motion the network should predict.
+
+    For each of the last ``num_pred`` frames in a sampled sequence, create a
+    pair with every earlier frame in that same sequence.
     """
-    :param num_samples:
-    :param num_pred: number of the (last) samples, for which the transformations are predicted
-        For each "pred" frame, pairs are formed with every one previous frame 
-    """
+    # Example: with num_samples=10 and num_pred=2, create all pairs from the
+    # last two frames to every earlier frame in the sampled sequence.
     return torch.tensor([[n0,n1] for n1 in range(num_samples-num_pred,num_samples) for n0 in range(n1)])
 
 
 
 def type_dim(label_pred_type, num_points=None, num_pairs=1):
+    """Return the flattened output width needed for a label/prediction type."""
     type_dim_dict = {
         "transform": 12,
         "parameter": 6,
@@ -23,9 +26,10 @@ def type_dim(label_pred_type, num_points=None, num_pairs=1):
 
 
 def reference_image_points(image_size, density=2):
-    """
-    :param image_size: (x, y), used for defining default grid image_points
-    :param density: (x, y), point sample density in each of x and y, default n=2
+    """Create a regular grid of reference image points in homogeneous form.
+
+    ``image_size`` defines the image extent and ``density`` controls how many
+    sample points are placed along each image axis.
     """
     if isinstance(density,int):
         density=(density,density)
@@ -44,7 +48,9 @@ def reference_image_points(image_size, density=2):
     return image_points
 
 def save_model(model,epoch,NUM_EPOCHS,FREQ_SAVE,SAVE_PATH):
-    # save the model at current epoch, and keep the number of models at 4
+    """Save the current checkpoint and keep only a small rolling history."""
+
+    # Save the model at the requested cadence, then prune older epoch snapshots.
     if epoch in range(0, NUM_EPOCHS, FREQ_SAVE):
 
         torch.save(model.state_dict(), os.path.join(os.getcwd(),SAVE_PATH, 'saved_model', 'model_epoch%08d' % epoch))
@@ -64,6 +70,8 @@ def save_best_network(epoch_label,model,running_loss_val, running_dist_val, val_
     :return:
     '''
 
+    # Track the best model under two criteria because the training loss and the
+    # geometric distance metric are not always minimised by the same checkpoint.
     if running_loss_val < val_loss_min:
         val_loss_min = running_loss_val
         file_name = os.path.join(os.getcwd(),SAVE_PATH, 'config.txt')
@@ -85,7 +93,9 @@ def save_best_network(epoch_label,model,running_loss_val, running_dist_val, val_
     return val_loss_min, val_dist_min
 
 def add_scalars(writer,epoch, loss_dists):
-    # loss and average distance in training and val
+    """Write training and validation metrics to TensorBoard."""
+
+    # Reduce any per-pair distance tensor to a single scalar before logging.
     train_epoch_loss = loss_dists['train_epoch_loss']
     train_epoch_dist = loss_dists['train_epoch_dist'].mean()
     epoch_loss_val = loss_dists['val_epoch_loss']
@@ -98,6 +108,7 @@ def add_scalars(writer,epoch, loss_dists):
 
 
 def scan_plot(gt,axs,color,width = 4, scatter = 8, legend_size=50,legend = None):
+    """Plot one scan trajectory as corner clouds plus start/end frame outlines."""
 
     gx_all, gy_all, gz_all = [gt[:, ii, :] for ii in range(3)]
     for i,ax in enumerate(axs):
@@ -128,7 +139,7 @@ def scan_plot(gt,axs,color,width = 4, scatter = 8, legend_size=50,legend = None)
         
 
 def scan_plot_gt_pred(gt,pred,saved_name,color,width = 4, scatter = 8, legend_size=50,legend = None):
-    # plot the scan in 3D
+    """Render and save a 3D overlay of ground-truth and predicted scans."""
 
     fig = plt.figure(figsize=(35,15))
     axs=[]
@@ -143,6 +154,8 @@ def scan_plot_gt_pred(gt,pred,saved_name,color,width = 4, scatter = 8, legend_si
     plt.close()
 
 def data_pairs_cal_label(num_frames):
-    # obtain the data_pairs to compute the tarnsfomration between frames and the reference (first) frame
+    """Create frame pairs from the first frame to every frame in the scan."""
+    # Used during evaluation to express the whole trajectory relative to a
+    # single reference frame.
     
     return torch.tensor([[0,n0] for n0 in range(num_frames)])

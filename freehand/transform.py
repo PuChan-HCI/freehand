@@ -38,6 +38,7 @@ Accumulating transformations using TransformAccumulation class:
 
 
 class LabelTransform():
+    """Convert tracked frame transforms into the chosen supervision target."""
 
     def __init__(
         self, 
@@ -63,7 +64,8 @@ class LabelTransform():
         if self.label_type=="point":        
             self.image_points = image_points
             self.tform_image_to_tool = tform_image_to_tool
-            # pre-compute reference points in tool coordinates
+            # Precompute reference image corners in tool coordinates so each
+            # relative transform can be applied directly during training.
             self.image_points_in_tool = torch.matmul(self.tform_image_to_tool,self.image_points)
             self.in_image_coords = in_image_coords
             if self.in_image_coords:  # pre-compute the inverse
@@ -86,6 +88,8 @@ class LabelTransform():
     
 
     def to_points(self, tforms, tforms_inv=None):
+        # Convert tracker poses into tool-to-tool relative transforms, then
+        # apply them to the fixed reference points.
         _tforms = self.to_transform_t2t(tforms, tforms_inv)
         if self.in_image_coords:
             _tforms = torch.matmul(self.tform_tool_to_image[None,None,...], _tforms)  # tform_tool1_to_image0
@@ -93,6 +97,7 @@ class LabelTransform():
 
     
     def to_transform_t2t(self, tforms, tforms_inv):
+        """Build relative tool transforms for each requested frame pair."""
 
         if tforms_inv is None:
             tforms_inv = torch.linalg.inv(tforms)
@@ -108,6 +113,7 @@ class LabelTransform():
 
 
 class PredictionTransform():
+    """Map raw network outputs into the same space used by the labels."""
 
     def __init__(
         self, 
@@ -173,6 +179,7 @@ class PredictionTransform():
         
 
     def __call__(self, outputs):
+        # The network predicts all frame-pair outputs in one flat vector.
         preds = outputs.reshape((outputs.shape[0],self.num_pairs,-1))
         return self.call_function(preds)
 
@@ -181,6 +188,8 @@ class PredictionTransform():
         return pts.reshape(pts.shape[0],self.num_pairs,-1,3)
     
     def transform_to_point(self,_tforms):
+        # Promote 3x4 affine parameters to homogeneous 4x4 transforms before
+        # applying them to the reference image points.
         last_rows = torch.cat([
             torch.zeros_like(_tforms[...,0])[...,None,None].expand(-1,-1,1,3),
             torch.ones_like(_tforms[...,0])[...,None,None]
@@ -197,6 +206,7 @@ class PredictionTransform():
         return params
     
     def parameter_to_point(self,params):
+        # Decode Euler-angle-plus-translation parameters into transforms first.
         _tforms = self.param_to_transform(params)
         if self.in_image_coords:
             _tforms = torch.matmul(self.tform_tool_to_image[None,None,...], _tforms)  # tform_tool1_to_image0
@@ -204,6 +214,8 @@ class PredictionTransform():
     
     @staticmethod
     def param_to_transform(params):
+        """Convert Euler-angle and translation parameters into 4x4 transforms."""
+
         # params: (batch,ch,6), "ch": num_pairs, "6":rx,ry,rz,tx,ty,tz
     
         cos_x = torch.cos(params[...,2])
@@ -222,6 +234,8 @@ class PredictionTransform():
 
 
 class ImageTransform:
+    """Normalise images and add light Gaussian noise augmentation."""
+
     def __init__(self,mean,std):
         self.mean = mean
         self.std = std
@@ -232,6 +246,7 @@ class ImageTransform:
 
 
 class TransformAccumulation:
+    """Compose sequential relative transforms during scan rollout."""
 
     def __init__(
         self, 
@@ -245,11 +260,12 @@ class TransformAccumulation:
         self.image_points = image_points
         self.tform_image_to_tool = tform_image_to_tool
         self.tform_tool_to_image = torch.linalg.inv(self.tform_image_to_tool) # pre-compute the inverse
-        # pre-compute reference points in tool coordinates
+        # Precompute the reference points once so only transform composition is
+        # required inside the inference loop.
         self.image_points_in_tool = torch.matmul(self.tform_image_to_tool,self.image_points)
 
     def __call__(self, tform_tool1_to_tool0, tform_tool2_to_tool1):  
-        # safer to input and output explicitly the previous transform: tform_tool1_to_tool0
+        # Compose the new local prediction with the previously accumulated pose.
         
         # last_rows = torch.cat((torch.zeros_like(tform_tool2_to_tool1[0,0,:,0]),torch.ones_like(tform_tool2_to_tool1[0,0,0:1,0])),axis=0).expand(list(tform_tool2_to_tool1.shape[0:2])[0],list(tform_tool2_to_tool1.shape[0:2])[1],1,4)
         # tform_tool2_to_tool1 = torch.cat((

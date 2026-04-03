@@ -71,6 +71,8 @@ if __name__ == '__main__':
 
 
     ## setup for cross-validation
+    # Split the preprocessed frame sequences into five folds, then keep one
+    # fold for validation and the remaining three for training.
     dset_folds = dataset_all.partition_by_ratio(
         ratios = [1]*5, 
         randomise=True, 
@@ -98,9 +100,13 @@ if __name__ == '__main__':
 
 
     ## loss
+    # The calibration matrix converts image-space predictions into the tool
+    # coordinate frame used by the ground-truth transforms.
     tform_calib = torch.tensor(read_calib_matrices(filename_calib=FILENAME_CALIB, resample_factor=RESAMPLE_FACTOR), device=device)
     data_pairs = pair_samples(NUM_SAMPLES, NUM_PRED).to(device)
     if (PRED_TYPE=="point") or (LABEL_TYPE=="point"):
+        # When the task is defined in point space, build a fixed set of image
+        # reference points that can be transformed between coordinate systems.
         image_points = reference_image_points(dset_train.frame_size,2).to(device)
         pred_dim = type_dim(PRED_TYPE, image_points.shape[1], data_pairs.shape[0])
         label_dim = type_dim(LABEL_TYPE, image_points.shape[1], data_pairs.shape[0])
@@ -123,6 +129,8 @@ if __name__ == '__main__':
         tform_image_to_tool=tform_calib
         )
 
+    # Training optimises either point coordinates or transformation parameters,
+    # so the criterion/metric pair depends on the chosen label representation.
     if LABEL_TYPE == "point":
         criterion = torch.nn.MSELoss()
         metrics = PointDistance()
@@ -149,12 +157,14 @@ if __name__ == '__main__':
         for step, (frames, tforms, tforms_inv) in enumerate(train_loader):
 
             frames, tforms, tforms_inv = frames.to(device), tforms.to(device), tforms_inv.to(device)    
+            # Input frames are stored as 8-bit intensities in the H5 file.
             frames = frames/255    
             labels = transform_label(tforms, tforms_inv)
 
             optimiser.zero_grad()
 
             outputs = model(frames)
+            # Map raw network outputs back into the same space as the labels.
             preds = transform_prediction(outputs)
 
             loss = criterion(preds, labels)
@@ -196,7 +206,7 @@ if __name__ == '__main__':
             if running_dist_val.shape[0]>1:
                 print('%.2f '*running_dist_val.shape[0] % tuple(running_dist_val)) 
             
-            # save model at current epoch
+            # Persist both checkpoints and TensorBoard scalars at the same cadence.
             save_model(model,epoch,NUM_EPOCHS,FREQ_SAVE,SAVE_PATH)
             # save best validation model
             val_loss_min, val_dist_min = save_best_network(epoch, model, running_loss_val, running_dist_val.mean(), val_loss_min, val_dist_min,SAVE_PATH)

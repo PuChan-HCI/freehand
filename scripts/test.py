@@ -53,7 +53,8 @@ FILENAME_WEIGHTS = "best_validation_dist_model"
 
 ## create the validation/test set loader
 dset_test = SSFrameDataset.read_json(os.path.join(SAVE_PATH,FILENAME_TEST))
-# TODO compare with train parameters before changing to all frames
+# The fold file stores the same sampling settings used during training. Check
+# them first, then reload the scan with all frames for long-horizon rollout.
 if NUM_SAMPLES != dset_test.num_samples:
     raise("Inconsistent num_samples.")
 if SAMPLE_RANGE != dset_test.sample_range:
@@ -62,6 +63,8 @@ dset_test = SSFrameDataset.read_json(os.path.join(SAVE_PATH,FILENAME_TEST), num_
 
 data_pairs = pair_samples(NUM_SAMPLES, NUM_PRED)
 frame_points = reference_image_points(dset_test.frame_size,2).to(device)
+# Calibration is needed both to decode network outputs and to compare them
+# against ground-truth frame geometry in the tool coordinate system.
 tform_calib = torch.tensor(read_calib_matrices(
     filename_calib=FILENAME_CALIB, 
     resample_factor=RESAMPLE_FACTOR
@@ -85,6 +88,7 @@ label_dim = type_dim(LABEL_TYPE, frame_points.shape[1], data_pairs.shape[0])
 
 
 ## load the model
+# Recreate the exact training architecture before loading the saved weights.
 model = build_model(
     efficientnet_b1, 
     in_frames = NUM_SAMPLES, 
@@ -97,13 +101,14 @@ model.train(False)
 ## inference
 for i_scan in range(len(dset_test)):
         
-    SCAN_INDEX = i_scan  # plot one scan
-    PAIR_INDEX = 0  # which prediction to use
-    START_FRAME_INDEX = 0  # starting frame - the reference 
+    SCAN_INDEX = i_scan     # plot one scan
+    PAIR_INDEX = 0          # which relative prediction inside the sequence to propagate
+    START_FRAME_INDEX = 0   # initial anchor frame for autoregressive rollout
 
     frames, tforms, tforms_inv = dset_test[SCAN_INDEX]
     frames, tforms, tforms_inv = (torch.tensor(t).to(device) for t in [frames,tforms,tforms_inv])
     
+    # Store one predicted quadrilateral per frame in the scan.
     predictions_allpts = torch.zeros((frames.shape[0],3,frame_points.shape[-1]), device=device)
 
     data_pairs_all = data_pairs_cal_label(frames.shape[0])
@@ -113,6 +118,8 @@ for i_scan in range(len(dset_test)):
             image_points=frame_points,
             tform_image_to_tool=tform_calib
             )
+    # Build the ground-truth point trajectories for the whole scan once, so the
+    # rollout can be compared and plotted against a common reference.
     labels_allpts = torch.squeeze(transform_label(tforms[None,...], tforms_inv[None,...]))
     
     
@@ -122,6 +129,7 @@ for i_scan in range(len(dset_test)):
     interval_pred = data_pairs[PAIR_INDEX][1] - data_pairs[PAIR_INDEX][0]
 
 
+    # Compose local pairwise predictions into a trajectory over the full scan.
     tform_1to0 = torch.eye(4, device=device)
     predictions_allpts[idx_f0+1] = labels_allpts[0]
     while 1:
@@ -138,10 +146,12 @@ for i_scan in range(len(dset_test)):
         if (idx_f0+NUM_SAMPLES) > frames.shape[0]:
             break
 
+    # The tail of the scan may not align with the prediction stride, so fill any
+    # remaining frames with the last available estimate for plotting.
     if NUM_SAMPLES > 2:
         predictions_allpts[idx_f0:,...] = predictions_allpts[idx_f0-1].expand(predictions_allpts[idx_f0:,...].shape[0],-1,-1)
 
-    # plot trajactory
+    # Save a trajectory overlay for qualitative inspection of this scan.
     scan_plot_gt_pred(
         labels_allpts.detach().cpu().numpy(),
         predictions_allpts.detach().cpu().numpy(),

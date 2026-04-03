@@ -7,6 +7,12 @@ import numpy as np
 
 
 class SSFrameDataset():  # Subject-Scan frame loader
+    """Dataset wrapper around the preprocessed HDF5 ultrasound frame store.
+
+    Each dataset item corresponds to one scan. Depending on ``num_samples``, the
+    item either returns a random subset of frames from that scan for training or
+    all frames for evaluation.
+    """
 
     def __init__(self, filename_h5, indices_in_use=None, num_samples=2, sample_range=None):
 
@@ -28,10 +34,12 @@ class SSFrameDataset():  # Subject-Scan frame loader
         self.num_frames = self.file['num_frames'][()]
         
         if indices_in_use is None:
+            # Default to every available subject/scan pair stored in the H5 file.
             self.indices_in_use = [(i_sub,i_scn) for i_sub in range(self.num_frames.shape[0]) for i_scn in range(self.num_frames.shape[1])]                    
         elif all([isinstance(t,tuple) for t in indices_in_use]):
             self.indices_in_use = indices_in_use
         elif isinstance(indices_in_use[0],list) and isinstance(indices_in_use[1],list):
+            # Expand subject and scan index lists into explicit scan identifiers.
             self.indices_in_use = [(i_sub,i_scn) for i_sub in indices_in_use[0] for i_scn in indices_in_use[1]]            
         else:
             raise("indices_in_use should be a list of tuples (idx_subject, idx_scans) of two lists, [indices_subjects] and [indices_scans].")
@@ -62,6 +70,7 @@ class SSFrameDataset():  # Subject-Scan frame loader
         
 
     def partition_by_ratio(self, ratios, randomise=False, subject_level=False):
+        """Split the current scan list into multiple datasets with given ratios."""
         num_sets = len(ratios)
         ratios = [ratios[i]/sum(ratios) for i in range(num_sets)]
         print("Partitioning into %d sets with a normalised ratios %s," %
@@ -75,6 +84,7 @@ class SSFrameDataset():  # Subject-Scan frame loader
             for ii in range(self.num_indices-sum(set_sizes)): 
                 set_sizes[ii]+=1  # add the remainders
             if randomise:
+                # Shuffle in place before slicing contiguous partitions.
                 random.shuffle(self.indices_in_use)            
             indices_sets = [self.indices_in_use[n0:n0+n1] for (n0, n1) in zip([sum(set_sizes[:ii]) for ii in range(num_sets)], set_sizes)]  # get the index tuples for all sets
             print("at scan-level, with %s scans." % (set_sizes))
@@ -104,6 +114,8 @@ class SSFrameDataset():  # Subject-Scan frame loader
         else:
             i_frames = self.frame_sampler(self.num_frames[indices])
 
+        # Frames and transforms are stored as separate HDF5 datasets keyed by
+        # subject, scan, and frame index.
         frames = [self.file['/sub{:03d}_scan{:02d}_frame{:04d}'.format(indices[0],indices[1],ii)] for ii in i_frames]
         tforms = [self.file['/sub{:03d}_scan{:02d}_tform{:04d}'.format(indices[0],indices[1],ii)] for ii in i_frames]
         tforms_inv = [self.file['/sub{:03d}_scan{:02d}_tform_inv{:04d}'.format(indices[0],indices[1],ii)] for ii in i_frames]
@@ -112,6 +124,8 @@ class SSFrameDataset():  # Subject-Scan frame loader
     
 
     def frame_sampler(self, n):
+        # Sample a local temporal window first, then choose sorted frame indices
+        # within that window so the model sees ordered sequences.
         n0 = random.randint(0,n-self.sample_range)  # sample the start index for the range
         idx_frames = random.sample(range(n0,n0+self.sample_range), self.num_samples)   # sample indices
         idx_frames.sort()
@@ -119,6 +133,7 @@ class SSFrameDataset():  # Subject-Scan frame loader
     
 
     def write_json(self, jason_filename):
+        """Persist the dataset split definition so it can be reused later."""
         with open(jason_filename, 'w', encoding='utf-8') as f:
             json.dump({
                 "filename" : self.filename, 
@@ -131,6 +146,7 @@ class SSFrameDataset():  # Subject-Scan frame loader
     
     @staticmethod
     def read_json(jason_filename,num_samples = None):
+        """Recreate a dataset split from a JSON definition written by write_json."""
         with open(jason_filename, 'r', encoding='utf-8') as f:
             obj = json.load(f)
             if num_samples is None:
