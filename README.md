@@ -1,4 +1,4 @@
-# Freehand ultrasound without external trackers
+# Freehand ultrasound without external trackers (Dev1 Branch)
 
 This repository contains algorithms to train deep neural networks, using scans of freehand ultrasound image frames acquired with ground-truth frame locations from external spatial trackers. The aim is to reconstruct the spatial frame locations or relative transformation between them, on the newly acquired scans.
 
